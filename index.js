@@ -5,17 +5,73 @@ const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const port = process.env.PORT || 5000;
 require("dotenv").config();
-// const stripe = Stripe('sk_test_...');
+const nodemailer = require('nodemailer');
+const mg = require('nodemailer-mailgun-transport');
+
 app.use(cors());
+
 app.use(express.json());
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
+
+
+// function sendBookingEmail(booking) {
+
+        
+//   const { email,treatmentName ,bookedDate,Patientemail} = booking;
+
+//   // let transporter = nodemailer.createTransport({
+//   //   host: 'smtp.sendgrid.net',
+//   //   port: 587,
+//   //   auth: {
+//   //     user: "apikey",
+//   //     pass: process.env.SENDGRID_API_KEY
+//   //   }
+//   // })
+
+//   const auth = {
+//     auth: {
+//       api_key: `${process.env.EMAILGUN_API_KEY}`,
+//       domain: `${process.env.EMAIL_SEND_DOMAIN  }`
+//     }
+//   }
+  
+//   const transporter = nodemailer.createTransport(mg(auth));
+
+//   transporter.sendMail({
+//     from: "SENDER_EMAIL", // verified sender email
+//     to: email, // recipient email
+//     subject: `Your Treatment for ${treatmentName} is confirmed`, // Subject line
+//     text: "Hello world!", // plain text body
+//     html: `
+//   <p>Dear ${Patientemail} </p>
+
+//     <h3>Your Appoinment is Confirmed</h3>
+//     <div>
+    
+//     <p>Your appoinment for : ${treatmentName}</p>
+//     <p> Please Vist us on ${bookedDate}</p>
+//     <p>Thanks from Doctors Portal</p>
+
+//     </div>
+    
+    
+//     `, // html body
+//   }, function (error, info) {
+//     if (error) {
+//       console.log(error);
+//     } else {
+//       console.log('Email sent: ' + info.response);
+//     }
+//   });
+// }
+
 
 function verifyJWT(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
     res.status(401).send("Unathorized Access");
   }
- 
+
   const token = authHeader.split(" ")[1];
 
   jwt.verify(token, process.env.SECRET_TOKEN, function (err, decoded) {
@@ -88,25 +144,70 @@ async function run() {
       const updateDoc = {
         $set: {
           paid: true,
-          transactionID : payment.transactionID,
+          transactionID: payment.transactionID,
         }
       }
-      const updatedResult = await bookingsCollection.updateOne(filter,updateDoc)
+      const updatedResult = await bookingsCollection.updateOne(filter, updateDoc)
       res.send(result)
     })
 
 
+    // User Jwt Api
+    app.put("/user/:email", async (req, res) => {
+      try {
+          const email = req.params.email;
+
+          // check the req
+          const query = { email: email }
+          const existingUser = await usersCollection.findOne(query)
+        
+          if (existingUser) {
+              const token = jwt.sign(
+                  { email: email },
+                  process.env.SECRET_TOKEN,
+                  { expiresIn: "1d" }
+              )
+              return res.send({ data: token  })
+          }
+          
+          else {
+                
+          const user = req.body;
+          const filter = { email: email };
+          const options = { upsert: true };
+          const updateDoc = {
+              $set: user
+          }
+          const result = await usersCollection.updateOne(filter, updateDoc, options);
+
+          // token generate 
+          const token = jwt.sign(
+              { email: email },
+              process.env.SECRET_TOKEN,
+              { expiresIn: "1d" }
+          )
+         return  res.send({ data: token   })
+
+          }
+
+
+
+      }
+      catch (err) {
+          console.log(err)
+      }
+  })
 
     // JWT taken API
 
     app.get("/jwt", async (req, res) => {
       const email = req.query.email;
-     
+
       const query = { email: email };
       const user = await usersCollection.findOne(query);
       if (user) {
         const token = jwt.sign({ email }, process.env.SECRET_TOKEN, {
-          expiresIn: "4h",
+          expiresIn: "7d",
         });
         return res.send({ accessToken: token });
       }
@@ -174,15 +275,16 @@ async function run() {
     // Getting Bookins Email Wise
 
     app.get("/bookings", verifyJWT, async (req, res) => {
+      // const decodedEmail = req.decoded.email;
+      // console.log(req.decoded.email);
       const email = req.query.email;
       const date = req.query.date
-      // const decodedEmail = req.decoded.email;
       // if (email !== decodedEmail) {
       //   res.status(403).send("Email NOT verified");
       // }
-     
 
-      
+
+
       const query = {
         Patientemail: email,
         bookedDate: date
@@ -221,6 +323,7 @@ async function run() {
         return res.send({ acknowledged: false, message });
       }
       const result = await bookingsCollection.insertOne(body);
+      // sendBookingEmail(body)
       res.send(result);
     });
 
@@ -228,7 +331,7 @@ async function run() {
     app.post("/users", async (req, res) => {
       const body = req.body;
       const email = body.email;
-        console.log(email)
+      console.log(email)
       const result = await usersCollection.insertOne(body);
       res.send(result);
     });
@@ -239,6 +342,15 @@ async function run() {
       const users = await usersCollection.find(query).toArray();
       res.send(users);
     });
+
+    // delete Users
+    app.delete('/users/:id',verifyJWT,verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: ObjectId(id) }
+      const result = await usersCollection.deleteOne(query);
+      res.send(result)
+    })
+
 
     // Verify Admin email
     app.get("/user/admin/:email", async (req, res) => {
